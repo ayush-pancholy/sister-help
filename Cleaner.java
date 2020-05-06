@@ -1,6 +1,7 @@
 package first_package;
 
 import javax.swing.*;
+import java.awt.BorderLayout;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
@@ -34,6 +35,7 @@ public class Cleaner {
         while (inScanner.hasNextLine()) {
             contents += (inScanner.nextLine() + " ");
         }
+        inScanner.close();
     }
 
     public void saveFile() throws Exception {
@@ -66,6 +68,7 @@ public class Cleaner {
                 out += "\n";
             }
         }
+        scanner.close();
         return out;
     }
 
@@ -114,25 +117,45 @@ public class Cleaner {
             }
         }
         contents = cur2;
+        scanner.close();
     }
 
     public void parseEquation() {
         Scanner scanner = new Scanner(contents);
-        String cur = "";
+        String cur = "";     
+        JTextArea textArea = new JTextArea(2, 20);
+        textArea.setText("Processed Sentences:\n\n");
+        textArea.setWrapStyleWord(true);
+        textArea.setLineWrap(true);
+        textArea.setOpaque(false);
+        textArea.setEditable(false);
+        textArea.setFocusable(false);
+        textArea.setBackground(UIManager.getColor("Label.background"));
+        textArea.setFont(UIManager.getFont("Label.font"));
+        textArea.setBorder(UIManager.getBorder("Label.border"));
+        JFrame frame = new JFrame();
+        frame.getContentPane().add(textArea, BorderLayout.CENTER);
+        frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+        frame.setLocationRelativeTo(null);
+        frame.setTitle("Progress");
+        frame.setVisible(true);
+    	String temp;
         while (scanner.hasNextLine()) {
-            cur += parseSentenceForEquation(scanner.nextLine()) + "\n";
+        	temp = parseSentenceForEquation(scanner.nextLine());
+            cur += temp + "\n";
+            textArea.setText(textArea.getText() + temp + "\n\n");
+            frame.setVisible(true);
         }
         contents = cur;
+        scanner.close();
     }
-
-    public ArrayList<Pair> findEquations(String sentence) {
+    
+    public Pair findNextEq(String sentence, int loc) {
         char[] curSentArr = sentence.toCharArray();
-        ArrayList<Pair> eqLocations = new ArrayList<>();
-        boolean noResponse = false;
-        for (int i = 0; i < curSentArr.length; i++) {
-            if (!noResponse && isForeign(curSentArr[i])) {
-                if (askYesNo("Would you like to make further changes to the following sentence?\n\n"
-                        + breakString(sentence), "Potential Equation Found")){
+        for (int i = loc; i < curSentArr.length; i++) {
+            if (isForeign(curSentArr[i])) {
+                if (askYesNo("Would you like to make changes to the following sentence?\n\n"
+                        + breakString(sentence), "Abnormal Character Found")){
                     Object[] options = new UniqueIdentifier[Math.min(curSentArr.length, i + right) - Math.max(0, i - left) + 1];
                     for (int j = Math.max(0, i - left); j < Math.min(curSentArr.length, i + right); j++) {
                         options[j - Math.max(0, i - left)] = new UniqueIdentifier(Character.toString(curSentArr[j]));
@@ -147,38 +170,43 @@ public class Cleaner {
                         String[] type = {"EQUATION", "INEQUALITY", "EXPRESSION", "Custom Replace", "Delete Selection"};
                         int selection3 = JOptionPane.showOptionDialog(null, "What would you like to do with '" + eq + "'?",
                                 "Equation", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, type, type[0]);
-                        eqLocations.add(new Pair(Math.max(0, i - left) + selection1,
-                                Math.max(0, i - left) + selection2 + 1, type[selection3]));
-                        i = Math.max(0, i - left) + selection2;
+                        return new Pair(Math.max(0, i - left) + selection1,
+                                Math.max(0, i - left) + selection2 + 1, type[selection3]);
                     }
                 } else {
-                    noResponse = true;
+                	return null;
                 }
             }
         }
-        return eqLocations;
+        return null;
     }
-
+    
     public String parseSentenceForEquation(String sentence) {
-        ArrayList<Pair> eqLocations = findEquations(sentence);
-        for (int i = eqLocations.size() - 1; i >= 0; i--) {
-            String first = sentence.substring(0, eqLocations.get(i).begin);
-            String second = sentence.substring(eqLocations.get(i).end, sentence.length());
-            if (eqLocations.get(i).data.equals("Custom Replace")) {
+    	Pair cur = findNextEq(sentence, 0);
+    	int nextInd = 0;
+    	while (cur != null) {
+    		String first = sentence.substring(0, cur.begin);
+    		String second = sentence.substring(cur.end, sentence.length());
+    		if (cur.data.equals("Custom Replace")) {
                 String input = getInput("Enter a replacement for '"
-                        + sentence.substring(eqLocations.get(i).begin, eqLocations.get(i).end) + "'");
+                        + sentence.substring(cur.begin, cur.end) + "'");
                 if (input == null) {
                     sentence = first + second;
+                    nextInd = first.length();
                 } else {
                     sentence = first + input + second;
+                    nextInd = first.length() + input.length();
                 }
-            } else if (eqLocations.get(i).data.equals("Delete Selection")) {
+            } else if (cur.data.equals("Delete Selection")) {
                 sentence = first + second;
+                nextInd = first.length();
             } else {
-                sentence = first + eqLocations.get(i).data + second;
+                sentence = first + cur.data + second;
+                nextInd = first.length() + cur.data.length();
             }
-        }
-        return sentence;
+    		cur = findNextEq(sentence, nextInd);
+    	}
+    	return sentence;
     }
 
     public String getInput(String prompt) {
@@ -215,8 +243,24 @@ public class Cleaner {
                 || (intVal >= 63 && intVal <= 90) || (intVal >= 95 && intVal <= 122));
     }
 
-    public boolean askYesNo(String question, String title) {
+    public boolean askTrueYesNo(String question, String title) {
         return JOptionPane.showConfirmDialog(null, question, title, JOptionPane.YES_NO_OPTION)
                 == JOptionPane.YES_OPTION;
+    }
+    
+    public boolean askYesNo(String question, String title) {
+    	String[] temp = {"Yes", "No", "Stop & Discard Changes"};
+    	int choice = JOptionPane.showOptionDialog(null, question, title,
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, temp, temp[0]);
+    	if (temp[choice].contentEquals("Yes")) {
+    		return true;
+    	} else if (temp[choice].contentEquals("No")) {
+    		return false;
+    	} 
+    	if (askTrueYesNo("Are you sure you want to exit? Changes will not be saved.", "Confirmation")) {
+    		System.exit(0);
+    		return false;
+    	}
+    	return askYesNo(question, title);
     }
 }
