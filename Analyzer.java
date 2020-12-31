@@ -15,7 +15,7 @@ public class Analyzer {
 	private Map<String, Set<LU>> frameMap;
 	private Map<LU, Set<LU>> output;
 	public static String prefix = "C:\\Users\\14086\\Desktop\\FNExperiments\\fndata-1.7\\lu\\";
-	public static String out_direc = "C:\\Users\\14086\\Desktop\\lu\\";
+	public static String out_direc = "C:\\Users\\14086\\Desktop\\lugrammatical\\";
 	public static String begin = "lu";
 	public static String ext = ".xml";
 	public static final int LAST_LU = 18820;
@@ -30,9 +30,9 @@ public class Analyzer {
 	public static void main(String[] args) {
 		Analyzer analyzer = new Analyzer();
 		analyzer.populateFrameMap();
-		//analyzer.findLUs();
-		//analyzer.replace();
-		System.out.println(analyzer.retrieveID("gripe.v", "Bragging"));
+		analyzer.findLUs();
+		analyzer.replace();
+		//System.out.println(analyzer.retrieveID("gripe.v", "Bragging"));
 	}
 	
 	public Analyzer() {
@@ -258,8 +258,9 @@ public class Analyzer {
 	
 	class Location implements Comparable<Location> {
 		String start, end;
+		int replen;
 		public Location(String startIn, String endIn) {
-			start = startIn; end = endIn;
+			start = startIn; end = endIn; replen = -1;
 		}
 		int start() {
 			return Integer.parseInt(start.substring(7, start.length() - 1));
@@ -269,6 +270,12 @@ public class Analyzer {
 		}
 		int len() {
 			return end() - start() + 1;
+		}
+		int replen() {
+			return replen;
+		}
+		void setReplen(int replen) {
+			this.replen = replen;
 		}
 		@Override
 		public String toString() {
@@ -301,8 +308,11 @@ public class Analyzer {
 		String replacement = replacee.getLabel();
 		int lu = replacer.getNum();
 		List<ArrayList<Location>> targets = findTargets2(lu);
-		String one = parseSentences(lu, replacement, targets);
-		String two = parseTexts(replacement, targets, one);
+		//String one = parseSentences(lu, replacement, targets);
+		//String two = parseTexts(replacement, targets, one);
+		List<Integer> replens = new ArrayList<Integer>();
+		String one = parseTexts(replacement, targets, lu);
+		String two = parseSentences(one, replacement, targets);
 		String three = parseTopLex(replacement, replacee.getNum(), two);
 		String four = parseMidLex(replacement, replacee, three);
 		return four.replace(gtRepl, "&gt;").replace(ltRepl, "&lt;").replace(quotRepl, "&quot;").replace(ampRepl, "&amp;");
@@ -373,15 +383,25 @@ public class Analyzer {
 		return out;
 	}
 	
-	public String parseTexts(String replacement, List<ArrayList<Location>> targets, String current) {
-		Scanner scanner = new Scanner(current);
+	public String parseTexts(String replacement, List<ArrayList<Location>> targets, int num) {
+		//Scanner scanner = new Scanner(current);
+		//System.out.println(num);
+		Scanner scanner = getLUScanner(num);
+		if (scanner == null) {
+			return null;
+		}
+		LU old = readLU(num);
+		String oldform;
+		String replform;
+		
 		String out = "";
 		String temp;
 		String temp2;
 		int count = 0;
 		int last;
 		while (scanner.hasNext()) {
-			temp = scanner.nextLine();
+			//temp = scanner.nextLine();
+			temp = scanner.nextLine().replace("&amp;", ampRepl).replace("&quot;", quotRepl).replace("&lt;", ltRepl).replace("&gt", gtRepl);
 			if (temp.contains("<text>")) {
 				temp = removeLeadingWhitespace(temp).substring(6);
 				temp2 = "<text>";
@@ -392,7 +412,11 @@ public class Analyzer {
 					} catch (StringIndexOutOfBoundsException e) {
 						//Issue when target is identified twice
 					}
-					temp2 += replacement;
+					oldform = temp.substring(targets.get(count).get(i).start(), targets.get(count).get(i).end() + 1).toLowerCase();
+					replform = magic(old, oldform, replacement);
+					targets.get(count).get(i).setReplen(replform.length());
+					//compare to old base to get word ending and capture length
+					temp2 += replform;
 					last = targets.get(count).get(i).end() + 1;
 					if (i == targets.get(count).size() - 1) {
 						temp2 += temp.substring(last, temp.length());
@@ -409,15 +433,22 @@ public class Analyzer {
 		return out;
 	}
 	
-	public String parseSentences(int num, String replacement, List<ArrayList<Location>> targets) {
-		Scanner scanner = getLUScanner(num);
-		if (scanner == null) {
-			return null;
-		}
+	public String magic(LU old, String oldform, String replacement) {
+		//TODO
+		return replacement;
+	}
+	
+	public String parseSentences(String current, String replacement, List<ArrayList<Location>> targets) {
+		//Scanner scanner = getLUScanner(num);
+		Scanner scanner = new Scanner(current);
+		//if (scanner == null) {
+		//	return null;
+		//}
 		String temp = "";
 		String out = "";
 		int count = 0;
 		int offset;
+		int ind = 0;
 		String temp2 = "";
 		String temp3 = "";
 		int oldEnd, oldStart;
@@ -436,16 +467,19 @@ public class Analyzer {
 					Scanner scan = new Scanner(temp);
 					while (scan.hasNext()) {
 						temp2 = scan.next();
-						if (temp2.contains("end=\"")) {
+						if (temp2.contains("end=\"") || temp2.contains("start=\"")) {
 							oldEnd = peel(temp2);
 							offset = 0;
 							for (Location loc : targets.get(count)) {
 								if (oldEnd >= loc.end()) {
-									offset += replacement.length() - loc.len();
+									//offset += replacement.length() - loc.len();
+									offset += loc.replen() - loc.len();
 								}
+								ind++;
 							}
-							temp2 = wrap(oldEnd + offset, false);
-						} else if (temp2.contains("start=\"")) {
+							temp2 = wrap(oldEnd + offset, temp2.contains("start=\""));
+						} 
+						/** else if (temp2.contains("start=\"")) {
 							oldStart = peel(temp2);
 							offset = 0;
 							for (Location loc : targets.get(count)) {
@@ -455,6 +489,7 @@ public class Analyzer {
 							}
 							temp2 = wrap(oldStart + offset, true);
 						}
+						*/
 						temp3 += temp2 + " ";
 					}
 					scan.close();
@@ -468,7 +503,9 @@ public class Analyzer {
 		}
 		out += temp;
 		scanner.close();
-		return out.replace("&amp;", ampRepl).replace("&quot;", quotRepl).replace("&lt;", ltRepl).replace("&gt", gtRepl);
+		//System.out.println(ind);
+		//return out.replace("&amp;", ampRepl).replace("&quot;", quotRepl).replace("&lt;", ltRepl).replace("&gt", gtRepl);
+		return out;
 	}
 	
 	public List<ArrayList<Location>> findTargets2(int num) {
