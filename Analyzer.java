@@ -310,7 +310,6 @@ public class Analyzer {
 		List<ArrayList<Location>> targets = findTargets2(lu);
 		//String one = parseSentences(lu, replacement, targets);
 		//String two = parseTexts(replacement, targets, one);
-		List<Integer> replens = new ArrayList<Integer>();
 		String one = parseTexts(replacement, targets, lu);
 		String two = parseSentences(one, replacement, targets);
 		String three = parseTopLex(replacement, replacee.getNum(), two);
@@ -435,6 +434,31 @@ public class Analyzer {
 	
 	public String magic(LU old, String oldform, String replacement) {
 		//TODO
+		//return replacement;
+		if (old.getName().equalsIgnoreCase(oldform)) {
+			return replacement;
+		}
+		oldform = oldform.toLowerCase();
+		if (old.getPOS().equalsIgnoreCase("v")) {
+			//verb
+			if (oldform.endsWith("ing")) {
+				replacement = (replacement.endsWith("e") ? replacement.substring(0, replacement.length() - 1) : replacement) + "ing";
+			} else if (oldform.endsWith("s")) {
+				replacement += "s";
+			} else if (oldform.endsWith("d")) {
+				replacement = (replacement.endsWith("e") ? replacement : replacement + "e") + "d";
+			}
+		} else if (old.getPOS().equalsIgnoreCase("n")) {
+			//noun
+			if (oldform.endsWith("s")) {
+				if (replacement.endsWith("s") || replacement.endsWith("sh") || replacement.endsWith("ch") || replacement.endsWith("x") || replacement.endsWith("z")) {
+					replacement += "es";
+				} else {
+					replacement += "s";
+				}
+			}
+		}
+		System.out.println("\"" + oldform + "\" has been replaced with \"" + replacement + "\"");
 		return replacement;
 	}
 	
@@ -448,10 +472,10 @@ public class Analyzer {
 		String out = "";
 		int count = 0;
 		int offset;
-		int ind = 0;
 		String temp2 = "";
 		String temp3 = "";
-		int oldEnd, oldStart;
+		int oldEnd;
+		//int oldStart;
 		while (scanner.hasNext()) {
 			temp = scanner.nextLine();
 			while (!temp.contains("<sentence") && scanner.hasNext()) {
@@ -475,7 +499,7 @@ public class Analyzer {
 									//offset += replacement.length() - loc.len();
 									offset += loc.replen() - loc.len();
 								}
-								ind++;
+								//ind++;
 							}
 							temp2 = wrap(oldEnd + offset, temp2.contains("start=\""));
 						} 
