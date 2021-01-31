@@ -8,7 +8,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.Files;
 import java.util.Scanner;
 
 public class Analyzer {
@@ -21,6 +23,8 @@ public class Analyzer {
 	public static final int LAST_LU = 18820;
 	public static final double ANNO_THRESH = 1;
 	public static final boolean SAME_POS = true;
+	public static final boolean NO_MULTIWORD_LEXEME = true;
+	//TODO there is a known issue regarding multiword lexemes
 	private Map<LU, LU> mostAnnotatedSister;
 	private static final String ampRepl = Character.toString((char) 300);
 	private static final String gtRepl = Character.toString((char) 301);
@@ -50,6 +54,15 @@ public class Analyzer {
 		}
 	}
 	
+	public String getLUString(int num) {
+		File file = new File(prefix + begin + Integer.toString(num) + ext);
+		try {
+			return new String(Files.readAllBytes(file.toPath()));
+		} catch (IOException e) {
+			return null;
+		}
+	}
+	
 	public int retrieveID(String luIn, String frame) {
 		for (LU lu : frameMap.get(frame)) {
 			if (lu.getName().equals(luIn)) {
@@ -68,6 +81,8 @@ public class Analyzer {
 		int cur;
 		double endpoint = (double)output.size();
 		for (LU lu : mostAnnotatedSister.keySet()) {
+			//if (lu.getNum() == 16806) {
+			
 			temp = replaceLUXML(mostAnnotatedSister.get(lu), lu); 
 			try {
 				writer = new PrintWriter(out_direc + "lu" + lu.getNum() + ".xml", "UTF-8");
@@ -81,26 +96,40 @@ public class Analyzer {
 				last = cur;
 			}
 			total++;
+			
+			//}
 		}
 		long end = System.currentTimeMillis();
 		System.out.println();
 		System.out.println("\nCompleted. Time taken: " + (end - begin) / 1000 + " seconds.");
 	}
 	
+	
 	public void findLUs() {
 		Set<LU> annSisters;
+		int totalOptimizableLexemes = 0;
+		LU mostAnnotatedLU;
 		for (String frame : frameMap.keySet()) {
 			if (percentAnnotated(frame) >= ANNO_THRESH) {
 				for (LU lu : frameMap.get(frame)) {
 					annSisters = annotatedSisters(lu, SAME_POS);
 					if (!lu.isAnnotated() && !annSisters.isEmpty()) {
-						output.put(lu, annSisters);
-						mostAnnotatedSister.put(lu, mostAnnotated(annSisters));
+						mostAnnotatedLU = mostAnnotated(annSisters);
+						totalOptimizableLexemes++;
+						if (NO_MULTIWORD_LEXEME && !lu.multiword() && !mostAnnotatedLU.multiword()) {
+							output.put(lu, annSisters);
+							mostAnnotatedSister.put(lu, mostAnnotatedLU);
+						}
 					}
 				}
 			}
 		}
-		System.out.println(output.size() + " optimizable LU's found.\n");
+		if (NO_MULTIWORD_LEXEME) {
+			System.out.println(totalOptimizableLexemes + " optimizable LU's found, of which " + output.size() 
+			+ " did not contain multiword lexemes in the repalcer/replacee pair..");
+		} else {
+			System.out.println(output.size() + " optimizable LU's found.\n");
+		}
 	}
 	
 	public void displayMostAnnoSnippet(int max) {
@@ -212,8 +241,10 @@ public class Analyzer {
 		spot = temp.indexOf('=');
 		int ann = Integer.parseInt(temp.substring(spot + 2, temp.length() - 1));
 		
+		//here is where we could add phrase type information
+		
 		scanner.close();
-		return new LU(name, num, frame, ann);
+		return new LU(name, num, frame, ann, ann != 0 && getLUString(num).contains("sentence"));
 	}
 	
 	class LU {
@@ -223,8 +254,9 @@ public class Analyzer {
 		private int annotated;
 		private String POS;
 		private String label;
-		LU(String nameIn, int numIn, String frameIn, int annotatedIn) {
-			name = nameIn; num = numIn; frame = frameIn; annotated = annotatedIn;
+		private boolean isAnn;
+		LU(String nameIn, int numIn, String frameIn, int annotatedIn, boolean isAnnIn) {
+			name = nameIn; num = numIn; frame = frameIn; annotated = annotatedIn; isAnn = isAnnIn; 
 			int loc = name.indexOf('.');
 			POS = name.substring(loc + 1);
 			label = name.substring(0, loc);
@@ -239,7 +271,7 @@ public class Analyzer {
 			return frame;
 		}
 		boolean isAnnotated() {
-			return annotated != 0;
+			return isAnn;
 		}
 		int getAnnotated() {
 			return annotated;
@@ -253,6 +285,9 @@ public class Analyzer {
 		}
 		public String getLabel() {
 			return label;
+		}
+		public boolean multiword() {
+			return label.contains(" ");
 		}
 	}
 	
@@ -307,7 +342,8 @@ public class Analyzer {
 	public String replaceLUXML(LU replacer, LU replacee) {
 		String replacement = replacee.getLabel();
 		int lu = replacer.getNum();
-		List<ArrayList<Location>> targets = findTargets2(lu);
+		List<ArrayList<Location>> targets = (!NO_MULTIWORD_LEXEME && replacer.getName().contains(" ")) ? findTargetsMWord(lu) : findTargetsSWord(lu);
+		//List<ArrayList<Location>> targets = new ArrayList<>();
 		//String one = parseSentences(lu, replacement, targets);
 		//String two = parseTexts(replacement, targets, one);
 		String one = parseTexts(replacement, targets, lu);
@@ -433,9 +469,8 @@ public class Analyzer {
 	}
 	
 	public String magic(LU old, String oldform, String replacement) {
-		//TODO
 		//return replacement;
-		if (old.getName().equalsIgnoreCase(oldform)) {
+		if (old.getLabel().equalsIgnoreCase(oldform)) {
 			return replacement;
 		}
 		oldform = oldform.toLowerCase();
@@ -458,7 +493,7 @@ public class Analyzer {
 				}
 			}
 		}
-		System.out.println("\"" + oldform + "\" has been replaced with \"" + replacement + "\"");
+		//System.out.println("\"" + oldform + "\" has been replaced with \"" + replacement + "\"");
 		return replacement;
 	}
 	
@@ -532,7 +567,7 @@ public class Analyzer {
 		return out;
 	}
 	
-	public List<ArrayList<Location>> findTargets2(int num) {
+	public List<ArrayList<Location>> findTargetsSWord(int num) {
 		Scanner scanner = getLUScanner(num);
 		if (scanner == null) {
 			return null;
@@ -563,6 +598,82 @@ public class Analyzer {
 					targets.add(new ArrayList<Location>());
 				}
 				targets.get(count).add(new Location(start, end));
+			}
+		}
+		scanner.close();
+		for (ArrayList<Location> list : targets) {
+			Collections.sort(list);
+		}
+		return targets;
+	}
+	
+	public List<ArrayList<Location>> findTargetsMWord(int num) {
+		Scanner scanner = getLUScanner(num);
+		if (scanner == null) {
+			return null;
+		}
+		List<ArrayList<Location>> targets = new ArrayList<>();
+		int count = 0;
+		String temp = "";
+		String end, start;
+		
+		while (!(temp.contains("Target\">")) && scanner.hasNext()) {
+			temp = scanner.next();
+		}
+		
+		while (scanner.hasNext()) {
+			end = ""; start = "";
+			/**
+			while (!(temp.contains("Target\">") || temp.contains("</sentence>")) && scanner.hasNext()) {
+				temp = scanner.next();
+			}
+			*/
+			if (temp.contains("</sentence>")) {
+				count++;
+				while (!(temp.contains("Target\">")) && scanner.hasNext()) {
+					temp = scanner.next();
+				}
+			} else if (scanner.hasNext()){
+				while (!temp.contains("end") && scanner.hasNext()) {
+					temp = scanner.next();
+				}
+				end = temp;
+				while (!temp.contains("start") && scanner.hasNext()) {
+					temp = scanner.next();
+				}
+				start = temp;
+				//System.out.println(start);
+				/**
+				while (!temp.contains("Target\"/>") && scanner.hasNext()) {
+					temp = scanner.next();
+				}
+				*/
+				if (count >= targets.size()) {
+					targets.add(new ArrayList<Location>());
+				}
+				while (!(temp.contains("Target\">") || temp.contains("</sentence>")) && scanner.hasNextLine()) {
+					temp = scanner.nextLine();
+					//System.out.println(temp);
+					if (temp.contains("end") && temp.contains("Target\"/>")) {
+						Scanner line = new Scanner(temp);
+						while (line.hasNext()) {
+							String word = line.next();
+							if (word.contains("end") && peel(word) > peel(end)) {
+								end = word;
+							} else if (word.contains("start") && peel(word) < peel(start)) {
+								start = word;
+							}
+						}
+						line.close();
+						//System.out.println(temp);
+					}
+					//temp = scanner.next();
+				}
+				//System.out.println(new Location(start, end));
+				targets.get(count).add(new Location(start, end));
+				if (new Location(start, end).end() < new Location(start, end).start()) {
+					System.out.println("Error: " + num);
+				}
 			}
 		}
 		scanner.close();
