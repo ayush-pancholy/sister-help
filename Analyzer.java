@@ -4,6 +4,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.io.File;
@@ -17,14 +18,21 @@ public class Analyzer {
 	private Map<String, Set<LU>> frameMap;
 	private Map<LU, Set<LU>> output;
 	public static String prefix = "C:\\Users\\14086\\Desktop\\FNExperiments\\fndata-1.7\\lu\\";
-	public static String out_direc = "C:\\Users\\14086\\Desktop\\lugrammatical\\";
+	public static String out_direc = "C:\\Users\\14086\\Desktop\\test_bad\\";
+	public static String remove_direc = "C:\\Users\\14086\\Desktop\\LU_Removal_Experiment\\LU_Removed\\";
+	public static String reaug_direc = "C:\\Users\\14086\\Desktop\\LU_Removal_Experiment\\LU_Reaugmented\\";
 	public static String begin = "lu";
 	public static String ext = ".xml";
+	public static boolean NO_MULTIWORD_LEXEME = true;
+	//TODO there is a known issue regarding multiword lexemes, so keep NO_MULTIWORD_LEXEME true for predictable behavior
+	public static boolean REMOVAL_EXPERIMENT = true;
+	public static int NUM_REMOVE = 1500;
+	public LU EMPTY;
+	
 	public static final int LAST_LU = 18820;
 	public static final double ANNO_THRESH = 1;
 	public static final boolean SAME_POS = true;
-	public static final boolean NO_MULTIWORD_LEXEME = true;
-	//TODO there is a known issue regarding multiword lexemes
+	public static final int EMPTY_TEMPLATE = 17541;
 	private Map<LU, LU> mostAnnotatedSister;
 	private static final String ampRepl = Character.toString((char) 300);
 	private static final String gtRepl = Character.toString((char) 301);
@@ -34,8 +42,15 @@ public class Analyzer {
 	public static void main(String[] args) {
 		Analyzer analyzer = new Analyzer();
 		analyzer.populateFrameMap();
-		analyzer.findLUs();
-		analyzer.replace();
+		if (REMOVAL_EXPERIMENT) {
+			System.out.println("Removing...");
+			analyzer.findRemovals();
+			System.out.println("Reaugmenting...");
+			analyzer.replace();
+		} else {
+			analyzer.findLUs();
+			analyzer.replace();
+		}
 		//System.out.println(analyzer.retrieveID("gripe.v", "Bragging"));
 	}
 	
@@ -85,7 +100,7 @@ public class Analyzer {
 			
 			temp = replaceLUXML(mostAnnotatedSister.get(lu), lu); 
 			try {
-				writer = new PrintWriter(out_direc + "lu" + lu.getNum() + ".xml", "UTF-8");
+				writer = new PrintWriter((REMOVAL_EXPERIMENT ? reaug_direc : out_direc) + "lu" + lu.getNum() + ".xml", "UTF-8");
 				writer.print(temp);
 				writer.flush();
 				writer.close();
@@ -102,6 +117,45 @@ public class Analyzer {
 		long end = System.currentTimeMillis();
 		System.out.println();
 		System.out.println("\nCompleted. Time taken: " + (end - begin) / 1000 + " seconds.");
+	}
+	
+	public void findRemovals() {
+		Set<LU> annSisters;
+		LU mostAnnotatedLU;
+		System.out.println("Finding all annotated LUs...");
+		for (String frame : frameMap.keySet()) {
+			if (percentAnnotated(frame) >= ANNO_THRESH) {
+				for (LU lu : frameMap.get(frame)) {
+					annSisters = annotatedSisters(lu, SAME_POS);
+					if (lu.isAnnotated() && !annSisters.isEmpty()) {
+						mostAnnotatedLU = mostAnnotated(annSisters);
+						if (NO_MULTIWORD_LEXEME && !lu.multiword() && !mostAnnotatedLU.multiword()) {
+							output.put(lu, annSisters);
+							mostAnnotatedSister.put(lu, mostAnnotatedLU);
+						}
+					}
+				}
+			}
+		}
+		System.out.println("Shuffling LUs...");
+		List<LU> keys = Arrays.asList((LU[]) output.keySet().toArray(new LU[output.keySet().size()]));
+		Collections.shuffle(keys);
+		System.out.println("Randomly keeping " + NUM_REMOVE + " LUs...");
+		for (int i = 0; i < keys.size() - NUM_REMOVE; i++) {
+			output.remove(keys.get(i));
+			mostAnnotatedSister.remove(keys.get(i));
+		}
+		System.out.println("Writing emptied LUs to file...");
+		PrintWriter writer;
+		for (LU lu : output.keySet()) {
+			String temp = replaceLUXML(EMPTY, lu);
+			try {
+				writer = new PrintWriter(remove_direc + "lu" + lu.getNum() + ".xml", "UTF-8");
+				writer.print(temp);
+				writer.flush();
+				writer.close();
+			} catch (Exception e) {}
+		}
 	}
 	
 	
@@ -207,6 +261,9 @@ public class Analyzer {
 					frameMap.put(cur.getFrame(), new HashSet<LU>());
 				}
 				frameMap.get(cur.getFrame()).add(cur);
+				if (cur.getNum() == EMPTY_TEMPLATE) {
+					EMPTY = cur;
+				}
 			}
 		}
 	}
@@ -235,16 +292,32 @@ public class Analyzer {
 		spot = temp.indexOf('=');
 		String frame = temp.substring(spot + 2, temp.length() - 1);
 		
+		while (!temp.contains("frameID")) {
+			temp = scanner.next();
+		}
+		spot = temp.indexOf('=');
+		String frameID = temp.substring(spot + 2, temp.length() - 1);
+		
 		while (!temp.contains("totalAnnotated")) {
 			temp = scanner.next();
 		}
 		spot = temp.indexOf('=');
 		int ann = Integer.parseInt(temp.substring(spot + 2, temp.length() - 1));
 		
+		String frameInfo = "";
+		while (!temp.contains("<frame>")) {
+			temp = scanner.next();
+		}
+		while (!temp.contains("</frame>")) {
+			frameInfo += (temp + " ");
+			temp = scanner.next();
+		}
+		frameInfo += temp;
+		
 		//here is where we could add phrase type information
 		
 		scanner.close();
-		return new LU(name, num, frame, ann, ann != 0 && getLUString(num).contains("sentence"));
+		return new LU(name, num, frame, frameID, frameInfo, ann, ann != 0 && getLUString(num).contains("sentence"));
 	}
 	
 	class LU {
@@ -255,8 +328,10 @@ public class Analyzer {
 		private String POS;
 		private String label;
 		private boolean isAnn;
-		LU(String nameIn, int numIn, String frameIn, int annotatedIn, boolean isAnnIn) {
-			name = nameIn; num = numIn; frame = frameIn; annotated = annotatedIn; isAnn = isAnnIn; 
+		private String frameID;
+		private String frameInfo;
+		LU(String nameIn, int numIn, String frameIn, String frameIDIn, String frameInfoIn, int annotatedIn, boolean isAnnIn) {
+			name = nameIn; num = numIn; frame = frameIn; annotated = annotatedIn; isAnn = isAnnIn; frameID = frameIDIn; frameInfo = frameInfoIn;
 			int loc = name.indexOf('.');
 			POS = name.substring(loc + 1);
 			label = name.substring(0, loc);
@@ -270,11 +345,17 @@ public class Analyzer {
 		String getFrame() {
 			return frame;
 		}
+		String getFrameInfo() {
+			return frameInfo;
+		}
 		boolean isAnnotated() {
 			return isAnn;
 		}
 		int getAnnotated() {
 			return annotated;
+		}
+		String getFrameID() {
+			return frameID;
 		}
 		@Override
 		public String toString() {
@@ -343,12 +424,9 @@ public class Analyzer {
 		String replacement = replacee.getLabel();
 		int lu = replacer.getNum();
 		List<ArrayList<Location>> targets = (!NO_MULTIWORD_LEXEME && replacer.getName().contains(" ")) ? findTargetsMWord(lu) : findTargetsSWord(lu);
-		//List<ArrayList<Location>> targets = new ArrayList<>();
-		//String one = parseSentences(lu, replacement, targets);
-		//String two = parseTexts(replacement, targets, one);
 		String one = parseTexts(replacement, targets, lu);
 		String two = parseSentences(one, replacement, targets);
-		String three = parseTopLex(replacement, replacee.getNum(), two);
+		String three = parseTopLex(replacement, replacee.getNum(), replacee.getFrame(), replacee.getFrameID(), replacee.getPOS(), replacee.getFrameInfo(), two);
 		String four = parseMidLex(replacement, replacee, three);
 		return four.replace(gtRepl, "&gt;").replace(ltRepl, "&lt;").replace(quotRepl, "&quot;").replace(ampRepl, "&amp;");
 	}
@@ -386,7 +464,7 @@ public class Analyzer {
 		return out;
 	}
 	
-	public String parseTopLex(String replacement, int replId, String current) {
+	public String parseTopLex(String replacement, int replId, String frame, String frameID, String POS, String frameInfo, String current) {
 		Scanner scanner = new Scanner(current);
 		String out = "";
 		String temp;
@@ -403,9 +481,19 @@ public class Analyzer {
 						while (temp3.indexOf(".") == -1) {
 							temp3 = sub.next();
 						}
-						temp3 = "name=\"" + replacement + temp3.substring(temp3.indexOf("."));
+						//temp3 = "name=\"" + replacement + temp3.substring(temp3.indexOf("."));
+						temp3 = "name=\"" + replacement + "." + POS + "\"";
 					} else if (temp3.indexOf("ID=\"") == 0) {
 						temp3 = "ID=\"" + replId + "\"";
+					} else if (temp3.indexOf("frame=\"") == 0) {
+						//do something
+						temp3 = "frame=\"" + frame + "\"";
+					} else if (temp3.indexOf("POS=\"") == 0) {
+						//do something
+						temp3 = "POS=\"" + POS.toUpperCase() + "\"";
+					} else if (temp3.indexOf("frameID=\"") == 0) {
+						//do something
+						temp3 = "frameID=\"" + frameID + "\"";
 					}
 					temp2 += temp3 + " ";
 				}
@@ -415,6 +503,10 @@ public class Analyzer {
 			out += temp + "\n";
 		}
 		scanner.close();
+		
+		int frameStart = out.indexOf("<frame>");
+		int frameEnd = out.indexOf("</frame>") + 8;
+		out = out.substring(0, frameStart) + frameInfo + out.substring(frameEnd);
 		return out;
 	}
 	
