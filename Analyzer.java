@@ -15,32 +15,36 @@ import java.nio.file.Files;
 import java.util.Scanner;
 
 public class Analyzer {
-	private Map<String, Set<LU>> frameMap;
-	private Map<LU, Set<LU>> output;
-	public static String prefix = "C:\\Users\\14086\\Desktop\\FNExperiments\\fndata-1.7\\lu\\";
-	public static String out_direc = "C:\\Users\\14086\\Desktop\\test_bad\\";
-	public static String remove_direc = "C:\\Users\\14086\\Desktop\\LU_Removal_Experiment\\LU_Removed\\";
-	public static String reaug_direc = "C:\\Users\\14086\\Desktop\\LU_Removal_Experiment\\LU_Reaugmented\\";
+	private Map<String, Set<LU>> frameMap; //Maps frame names to sets of associated lexical units
+	private Map<LU, Set<LU>> output; //Maps unannotated LUs with annotated sister LUs of the same POS
+	public static String prefix = "C:\\Users\\14086\\Desktop\\FNExperiments\\fndata-1.7\\lu\\"; //Path to LU folder
+	public static String out_direc = "C:\\Users\\14086\\Desktop\\test_orig\\"; //Path to desired augmentation output
+	public static String remove_direc = "C:\\Users\\14086\\Desktop\\LU_Removal_Experiment\\LU_Removed\\"; //Path to desired stripped LUs output
+	public static String reaug_direc = "C:\\Users\\14086\\Desktop\\LU_Removal_Experiment\\LU_Reaugmented\\"; //Path to reaugmented LUs output
 	public static String begin = "lu";
 	public static String ext = ".xml";
-	public static boolean NO_MULTIWORD_LEXEME = true;
-	//TODO there is a known issue regarding multiword lexemes, so keep NO_MULTIWORD_LEXEME true for predictable behavior
-	public static boolean REMOVAL_EXPERIMENT = true;
-	public static int NUM_REMOVE = 1500;
-	public LU EMPTY;
+	public static boolean NO_MULTIWORD_LEXEME = true; //TODO there is a known issue regarding multiword lexemes, so keep NO_MULTIWORD_LEXEME true for predictable behavior
+	public static boolean REMOVAL_EXPERIMENT = false; //Make true in order to perform LU annotation stripping and reaugmentation
+	public static int NUM_REMOVE = 1500; //Number of lexical units 
+	public LU EMPTY; //Base empty lexical unit whose empty annotation set is to be copied into LUs designated for annotation stripping
 	
-	public static final int LAST_LU = 18820;
-	public static final double ANNO_THRESH = 1;
-	public static final boolean SAME_POS = true;
-	public static final int EMPTY_TEMPLATE = 17541;
-	private Map<LU, LU> mostAnnotatedSister;
-	private static final String ampRepl = Character.toString((char) 300);
-	private static final String gtRepl = Character.toString((char) 301);
-	private static final String ltRepl = Character.toString((char) 302);
-	private static final String quotRepl = Character.toString((char) 303);
+	public static final int LAST_LU = 18820; //The last numbered lexical unit
+	public static final double ANNO_THRESH = 1; //How annotated should the frame be for us to perform our replacement algorithm? (this number is in percent)
+	public static final boolean SAME_POS = true; //Keep SAME_POS true unless you'd like the possibility of replacing a word with one of a different part of speech
+	public static final int EMPTY_TEMPLATE = 17541; //A lexical unit known to have an empty annotation set, which will be copied into LUs designated for annotation stripping
+	private Map<LU, LU> mostAnnotatedSister; //Maps unannotated LUs to the sister LU of the same POS that is *most* annotated (i.e., has the most number of annotations)
+	private static final String ampRepl = Character.toString((char) 300); //Ampersand symbol
+	private static final String gtRepl = Character.toString((char) 301); //Greater than symbol
+	private static final String ltRepl = Character.toString((char) 302); //Less than symbol
+	private static final String quotRepl = Character.toString((char) 303); //Quote symbol
 
+	/**
+	 * Main function instantiates the analyzer and creates the FrameMap object. It then either 
+	 * performs the replacement or reaugmentation process.
+	 * @param args
+	 */
 	public static void main(String[] args) {
-		Analyzer analyzer = new Analyzer();
+		Analyzer analyzer = new Analyzer(); 
 		analyzer.populateFrameMap();
 		if (REMOVAL_EXPERIMENT) {
 			System.out.println("Removing...");
@@ -51,15 +55,22 @@ public class Analyzer {
 			analyzer.findLUs();
 			analyzer.replace();
 		}
-		//System.out.println(analyzer.retrieveID("gripe.v", "Bragging"));
 	}
 	
+	/**
+	 * Generic constructor function instantiates instance variables.
+	 */
 	public Analyzer() {
 		frameMap = new HashMap<String, Set<LU>>();
 		output = new HashMap<LU, Set<LU>>();
 		mostAnnotatedSister = new HashMap<LU, LU>();
 	}
 	
+	/**
+	 * Builds a scanner for a given LU number.
+	 * @param num: the LU number for which a scanner is to be instantiated.
+	 * @return A new scanner
+	 */
 	public Scanner getLUScanner(int num) {
 		File file = new File(prefix + begin + Integer.toString(num) + ext);
 		try {
@@ -69,6 +80,11 @@ public class Analyzer {
 		}
 	}
 	
+	/**
+	 * Retrieves the contents of a specified lexical unit as a String.
+	 * @param num: the LU number for which the String is to be returned.
+	 * @return the String representation of the lexical unit file
+	 */
 	public String getLUString(int num) {
 		File file = new File(prefix + begin + Integer.toString(num) + ext);
 		try {
@@ -78,6 +94,12 @@ public class Analyzer {
 		}
 	}
 	
+	/**
+	 * Determines the number of a lexical unit based on a name and a frame.
+	 * @param luIn: the name of the lexical unit whose number is to be retrieved
+	 * @param frame: the frame to which the lexical unit belongs
+	 * @return
+	 */
 	public int retrieveID(String luIn, String frame) {
 		for (LU lu : frameMap.get(frame)) {
 			if (lu.getName().equals(luIn)) {
@@ -87,6 +109,14 @@ public class Analyzer {
 		return -1;
 	}
 	
+	/**
+	 * Performs the lexical unit replacement. For each lexical unit found with at least one annotated sister lexical unit
+	 * of the same part of speech (that belongs to a frame whose fraction of annotated lexical unit exceeds the annotation
+	 * threshold), each instance of that sister LU in its annotation set is replaced with the previously unannotated LU (whose 
+	 * word ending has been modified accordingly). The new LU XML files are written to either out_direc or reaug_direc depending
+	 * on whether the function is being called during reaugmentation for an annotation removal experiment or during typical
+	 * augmentation.
+	 */
 	public void replace() {
 		long begin = System.currentTimeMillis();
 		double total = 0;
@@ -96,8 +126,6 @@ public class Analyzer {
 		int cur;
 		double endpoint = (double)output.size();
 		for (LU lu : mostAnnotatedSister.keySet()) {
-			//if (lu.getNum() == 16806) {
-			
 			temp = replaceLUXML(mostAnnotatedSister.get(lu), lu); 
 			try {
 				writer = new PrintWriter((REMOVAL_EXPERIMENT ? reaug_direc : out_direc) + "lu" + lu.getNum() + ".xml", "UTF-8");
@@ -111,14 +139,17 @@ public class Analyzer {
 				last = cur;
 			}
 			total++;
-			
-			//}
 		}
 		long end = System.currentTimeMillis();
 		System.out.println();
 		System.out.println("\nCompleted. Time taken: " + (end - begin) / 1000 + " seconds.");
 	}
 	
+	
+	/**
+	 * Finds all annotated lexical units and 'empties' 1500 of those associated annotation sets at random. It does this
+	 * by copying the annotation set of EMPTY into those 1500 LU XML files.
+	 */
 	public void findRemovals() {
 		Set<LU> annSisters;
 		LU mostAnnotatedLU;
@@ -160,6 +191,7 @@ public class Analyzer {
 	
 	
 	public void findLUs() {
+		boolean shownExample = false;
 		Set<LU> annSisters;
 		int totalOptimizableLexemes = 0;
 		LU mostAnnotatedLU;
@@ -173,6 +205,9 @@ public class Analyzer {
 						if (NO_MULTIWORD_LEXEME && !lu.multiword() && !mostAnnotatedLU.multiword()) {
 							output.put(lu, annSisters);
 							mostAnnotatedSister.put(lu, mostAnnotatedLU);
+						} else if (!shownExample && NO_MULTIWORD_LEXEME && lu.multiword()) {
+							System.out.println(lu.getName());
+							shownExample = true;
 						}
 					}
 				}
